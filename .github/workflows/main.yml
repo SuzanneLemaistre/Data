@@ -1,0 +1,42 @@
+name: Collecte quotidienne données Spot France (RTE)
+
+on:
+  schedule:
+    # Tous les jours à 08h00 UTC (10h heure de Paris en été, 9h en hiver)
+    # Les données J-1 sont publiées par RTE en début de matinée
+    - cron: "0 8 * * *"
+  workflow_dispatch:   # Permet aussi un lancement manuel depuis GitHub
+
+permissions:
+  contents: write      # Nécessaire pour que le workflow puisse commiter le CSV
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Configurer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install requests
+
+      - name: Lancer la collecte
+        env:
+          RTE_CLIENT_ID:     ${{ secrets.RTE_CLIENT_ID }}
+          RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
+        run: python fetch_data.py
+
+      - name: Commiter et pousser les nouvelles données
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/spot_france.csv
+          # Ne commite que s'il y a vraiment des changements
+          git diff --cached --quiet || git commit -m "data: ajout données spot du $(date -u +%Y-%m-%d)"
+          git push
