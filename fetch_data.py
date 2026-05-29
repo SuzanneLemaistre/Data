@@ -20,13 +20,13 @@ CLIENT_SECRET = os.environ["RTE_CLIENT_SECRET"]
 OUTPUT_FILE   = Path("data/spot_france.csv")
 
 TOKEN_URL     = "https://digital.iservices.rte-france.com/token/oauth/"
-API_URL       = "https://digital.iservices.rte-france.com/open_api/wholesale_market/v2/france_power_exchanges"
+API_URL       = "https://digital.iservices.rte-france.com/open_api/wholesale_market/v3/france_power_exchanges"
 
 CSV_HEADERS = [
     "date_heure_debut",
     "date_heure_fin",
-    "valeur_eur_mwh",
-    "unite",
+    "prix_eur_mwh",
+    "volume_mw",
 ]
 
 # ── Authentification OAuth2 ───────────────────────────────────────────────────
@@ -59,8 +59,8 @@ def fetch_prices(token: str, start: date, end: date) -> list[dict]:
             records.append({
                 "date_heure_debut": value.get("start_date", ""),
                 "date_heure_fin":   value.get("end_date", ""),
-                "valeur_eur_mwh":   value.get("value", ""),
-                "unite":            exchange.get("unit", "EUR/MWh"),
+                "prix_eur_mwh":     value.get("price", ""),
+                "volume_mw":        value.get("value", ""),
             })
 
     return records
