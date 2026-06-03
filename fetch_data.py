@@ -149,17 +149,16 @@ def fetch_terre(token, start, end):
                         params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     resp.raise_for_status()
     rows = []
-    for block in resp.json().get("standard_rr_data", []):
-        for v in block.get("terre_mesures", []):
-            rows.append({
-                "date_heure_debut":      v.get("start_date", ""),
-                "direction":             v.get("direction", ""),
-                "total_requested_volume": v.get("total_requested_volume", ""),
-                "total_satisfied_need":  v.get("total_satisfied_need", ""),
-                "activated_volume":      v.get("activated_volume", ""),
-                "activated_volume_rsoint": v.get("activated_volume_rsoint", ""),
-                "clearing_price":        v.get("clearing_price", ""),
-            })
+    for v in resp.json().get("terre", {}).get("terre_mesures", []):
+        rows.append({
+            "date_heure_debut":        v.get("start_date", ""),
+            "direction":               v.get("direction", ""),
+            "total_requested_volume":  v.get("total_requested_volume", ""),
+            "total_satisfied_need":    v.get("total_satisfied_need", ""),
+            "activated_volume":        v.get("activated_volume", ""),
+            "activated_volume_rsoint": v.get("activated_volume_rsoint", ""),
+            "clearing_price":          v.get("clearing_price", ""),
+        })
     return rows
 
 HEADERS_TERRE = [
@@ -176,17 +175,16 @@ def fetch_picasso(token, start, end):
                         params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     resp.raise_for_status()
     rows = []
-    for block in resp.json().get("standard_afrr_data", []):
-        for v in block.get("picasso_mesures", []):
-            rows.append({
-                "date_heure_debut":                      v.get("start_date", ""),
-                "upward_afrr_requested_need":            v.get("upward_afrr_requested_need", ""),
-                "downward_afrr_requested_need":          v.get("downward_afrr_requested_need", ""),
-                "upward_afrr_activated_volume_for_fr":   v.get("upward_afrr_activated_volume_for_fr", ""),
-                "downward_afrr_activated_volume_for_fr": v.get("downward_afrr_activated_volume_for_fr", ""),
-                "upward_afrr_activated_volume_in_fr":    v.get("upward_afrr_activated_volume_in_fr", ""),
-                "downward_afrr_activated_volume_in_fr":  v.get("downward_afrr_activated_volume_in_fr", ""),
-            })
+    for v in resp.json().get("picasso", {}).get("picasso_mesures", []):
+        rows.append({
+            "date_heure_debut":                      v.get("start_date", ""),
+            "upward_afrr_requested_need":            v.get("upward_afrr_requested_need", ""),
+            "downward_afrr_requested_need":          v.get("downward_afrr_requested_need", ""),
+            "upward_afrr_activated_volume_for_fr":   v.get("upward_afrr_activated_volume_for_fr", ""),
+            "downward_afrr_activated_volume_for_fr": v.get("downward_afrr_activated_volume_for_fr", ""),
+            "upward_afrr_activated_volume_in_fr":    v.get("upward_afrr_activated_volume_in_fr", ""),
+            "downward_afrr_activated_volume_in_fr":  v.get("downward_afrr_activated_volume_in_fr", ""),
+        })
     return rows
 
 HEADERS_PICASSO = [
@@ -204,10 +202,10 @@ def fetch_afrr_price(token, start, end):
                         params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     resp.raise_for_status()
     rows = []
-    for day in resp.json().get("afrr_marginal_price", []):
+    for day in resp.json().get("days", []):
         for v in day.get("datas", []):
             rows.append({
-                "date_heure_debut":            day.get("start_date", "") + "T" + v.get("start_date", ""),
+                "date_heure_debut":            day.get("start_date", "") + "T" + v.get("step", ""),
                 "prorata_mode":                v.get("prorata_mode", ""),
                 "picasso_connection":          v.get("picasso_connection", ""),
                 "upward_afrr_marginal_price":  v.get("upward_afrr_marginal_price", ""),
@@ -233,8 +231,7 @@ def fetch_mfrr(token, start, end):
                         params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     resp.raise_for_status()
     rows = []
-    for block in resp.json().get("standard_mfrr_data", []):
-        for v in block.get("mari_mesures", []):
+    for v in resp.json().get("mari", {}).get("mari_mesures", []):
             rows.append({
                 "date_heure_debut":              v.get("start_date", ""),
                 "total_requested_volume_SA":     v.get("total_requested_volume_SA", ""),
@@ -286,12 +283,6 @@ def main():
 
     print(f"\n[{datetime.now().isoformat()}] Collecte du {yesterday} …\n")
     token = get_token()
-
-  # DEBUG
-    for endpoint in ["standard_rr_data", "standard_afrr_data", "afrr_marginal_price", "standard_mfrr_data"]:
-        r = requests.get(f"{BE_BASE}/{endpoint}", headers=auth_headers(token),
-                         params={"start_date": fmt_dt(yesterday), "end_date": fmt_dt(today)})
-        print(f"[DEBUG {endpoint}] status={r.status_code} body={r.text[:300]}")
 
     # 1. Wholesale Market
     try:
