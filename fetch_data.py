@@ -287,6 +287,12 @@ def main():
     print(f"\n[{datetime.now().isoformat()}] Collecte du {yesterday} …\n")
     token = get_token()
 
+  # DEBUG
+    for endpoint in ["standard_rr_data", "standard_afrr_data", "afrr_marginal_price", "standard_mfrr_data"]:
+        r = requests.get(f"{BE_BASE}/{endpoint}", headers=auth_headers(token),
+                         params={"start_date": fmt_dt(yesterday), "end_date": fmt_dt(today)})
+        print(f"[DEBUG {endpoint}] status={r.status_code} body={r.text[:300]}")
+
     # 1. Wholesale Market
     try:
         rows = fetch_wholesale(token, yesterday, today)
