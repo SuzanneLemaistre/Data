@@ -1,0 +1,31 @@
+name: Fusion données historiques SPOT
+
+on:
+  workflow_dispatch:   # Lancement manuel uniquement
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Configurer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fusionner les données historiques
+        run: python merge_historical.py historical_spot.csv data/spot_france.csv
+
+      - name: Commiter et pousser
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/spot_france.csv
+          git diff --cached --quiet || git commit -m "data: fusion données historiques SPOT"
+          git push
