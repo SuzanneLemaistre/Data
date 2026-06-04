@@ -32,7 +32,8 @@ OUTPUT_HEADERS = ["date_heure_debut", "date_heure_fin", "prix_eur_mwh", "volume_
 def parse_mtu(mtu: str):
     """
     Parse '01/01/2026 00:00:00 - 01/01/2026 00:15:00' (CET/CEST)
-    → (start_utc_iso, end_utc_iso)
+    → (start_iso, end_iso) au format heure locale Paris avec offset,
+      identique au format de l'API RTE (ex: 2026-01-01T00:00:00+01:00)
     """
     parts = mtu.strip().split(" - ")
     if len(parts) != 2:
@@ -45,14 +46,14 @@ def parse_mtu(mtu: str):
     except ValueError:
         return None, None
 
-    # Convertir en UTC et formater
-    start_utc = start_cet.astimezone(ZoneInfo("UTC"))
-    end_utc   = end_cet.astimezone(ZoneInfo("UTC"))
+    def fmt_local(dt):
+        """Formate avec l'offset local (ex: +01:00 ou +02:00)."""
+        total_sec = int(dt.utcoffset().total_seconds())
+        sign = "+" if total_sec >= 0 else "-"
+        h, m = divmod(abs(total_sec) // 60, 60)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S") + f"{sign}{h:02d}:{m:02d}"
 
-    return (
-        start_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
-        end_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
-    )
+    return fmt_local(start_cet), fmt_local(end_cet)
 
 
 def load_historical(path: Path) -> list[dict]:
