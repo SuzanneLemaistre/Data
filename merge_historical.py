@@ -69,9 +69,15 @@ def load_historical(path: Path) -> list[dict]:
 
     print(f"  Encodage détecté : {encoding_used}")
 
+    # Détecter le séparateur (virgule ou point-virgule)
+    with open(path, newline="", encoding=encoding_used) as f:
+        sample = f.read(2048)
+    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    print(f"  Séparateur détecté : '{delimiter}'")
+
     rows = []
     with open(path, newline="", encoding=encoding_used) as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(f, delimiter=delimiter)
         headers = reader.fieldnames or []
         print(f"  Colonnes détectées : {headers}")
 
