@@ -75,16 +75,24 @@ def load_historical(path: Path) -> list[dict]:
     delimiter = ";" if sample.count(";") > sample.count(",") else ","
     print(f"  Séparateur détecté : '{delimiter}'")
 
-    # Diagnostic : afficher les premiers octets bruts du fichier
-    with open(path, "rb") as f:
-        raw = f.read(256)
-    print(f"  Premiers octets (raw) : {raw!r}")
+    # Le fichier est double-encodé : chaque ligne est enveloppée dans des
+    # guillemets externes et les guillemets internes sont doublés ("" → ").
+    # On désencapsule chaque ligne avant de parser.
+    import io
+    clean_lines = []
+    with open(path, newline="", encoding=encoding_used) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('"') and line.endswith('"'):
+                line = line[1:-1]          # supprimer les guillemets externes
+            line = line.replace('""', '"') # désescaper les guillemets internes
+            clean_lines.append(line)
 
     rows = []
-    with open(path, newline="", encoding=encoding_used) as f:
-        reader = csv.DictReader(f, delimiter=delimiter)
-        print(f"  Nb colonnes header : {len(reader.fieldnames or [])}")
-        print(f"  Headers : {reader.fieldnames}")
+    reader = csv.DictReader(io.StringIO("\n".join(clean_lines)), delimiter=delimiter)
+    print(f"  Headers : {reader.fieldnames}")
         headers = reader.fieldnames or []
         print(f"  Colonnes détectées : {headers}")
 
