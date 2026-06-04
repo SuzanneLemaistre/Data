@@ -92,43 +92,42 @@ def load_historical(path: Path) -> list[dict]:
 
     rows = []
     reader = csv.DictReader(io.StringIO("\n".join(clean_lines)), delimiter=delimiter)
-    print(f"  Headers : {reader.fieldnames}")
-        headers = reader.fieldnames or []
-        print(f"  Colonnes détectées : {headers}")
+    headers = reader.fieldnames or []
+    print(f"  Headers : {headers}")
 
-        # Trouver les colonnes MTU et prix de façon flexible
-        mtu_col   = next((h for h in headers if "MTU" in h.upper()), None)
-        price_col = next((h for h in headers if "DAY" in h.upper() and "PRICE" in h.upper()), None)
+    # Trouver les colonnes MTU et prix de façon flexible
+    mtu_col   = next((h for h in headers if "MTU" in h.upper()), None)
+    price_col = next((h for h in headers if "DAY" in h.upper() and "PRICE" in h.upper()), None)
 
-        if not mtu_col:
-            print(f"  ❌ Colonne MTU introuvable.")
-            return []
-        if not price_col:
-            print(f"  ❌ Colonne prix Day-ahead introuvable.")
-            return []
+    if not mtu_col:
+        print(f"  ❌ Colonne MTU introuvable.")
+        return []
+    if not price_col:
+        print(f"  ❌ Colonne prix Day-ahead introuvable.")
+        return []
 
-        print(f"  Colonne MTU  : '{mtu_col}'")
-        print(f"  Colonne Prix : '{price_col}'")
+    print(f"  Colonne MTU  : '{mtu_col}'")
+    print(f"  Colonne Prix : '{price_col}'")
 
-        for i, row in enumerate(reader, 1):
-            mtu   = row.get(mtu_col, "").strip()
-            price = row.get(price_col, "").strip()
+    for i, row in enumerate(reader, 1):
+        mtu   = row.get(mtu_col, "").strip()
+        price = row.get(price_col, "").strip()
 
-            if not mtu or not price:
-                continue
+        if not mtu or not price:
+            continue
 
-            start, end = parse_mtu(mtu)
-            if not start:
-                if i <= 3:  # n'afficher que les 3 premières erreurs
-                    print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu!r}")
-                continue
+        start, end = parse_mtu(mtu)
+        if not start:
+            if i <= 3:
+                print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu!r}")
+            continue
 
-            rows.append({
-                "date_heure_debut": start,
-                "date_heure_fin":   end,
-                "prix_eur_mwh":     price,
-                "volume_mw":        "",
-            })
+        rows.append({
+            "date_heure_debut": start,
+            "date_heure_fin":   end,
+            "prix_eur_mwh":     price,
+            "volume_mw":        "",
+        })
 
     return rows
 
