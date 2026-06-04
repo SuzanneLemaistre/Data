@@ -75,9 +75,16 @@ def load_historical(path: Path) -> list[dict]:
     delimiter = ";" if sample.count(";") > sample.count(",") else ","
     print(f"  Séparateur détecté : '{delimiter}'")
 
+    # Diagnostic : afficher les premiers octets bruts du fichier
+    with open(path, "rb") as f:
+        raw = f.read(256)
+    print(f"  Premiers octets (raw) : {raw!r}")
+
     rows = []
     with open(path, newline="", encoding=encoding_used) as f:
         reader = csv.DictReader(f, delimiter=delimiter)
+        print(f"  Nb colonnes header : {len(reader.fieldnames or [])}")
+        print(f"  Headers : {reader.fieldnames}")
         headers = reader.fieldnames or []
         print(f"  Colonnes détectées : {headers}")
 
