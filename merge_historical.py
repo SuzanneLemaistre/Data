@@ -57,52 +57,57 @@ def parse_mtu(mtu: str):
 
 def load_historical(path: Path) -> list[dict]:
     # Essayer plusieurs encodages courants
+    encoding_used = None
     for encoding in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
         try:
             with open(path, newline="", encoding=encoding) as f:
-                content = f.read()
+                f.read()
+            encoding_used = encoding
             break
         except UnicodeDecodeError:
             continue
 
-    import io
-    reader = csv.DictReader(io.StringIO(content))
-    headers = reader.fieldnames or []
-    print(f"  Colonnes détectées : {headers}")
-
-    # Trouver les colonnes MTU et prix de façon flexible
-    mtu_col   = next((h for h in headers if "MTU" in h.upper()), None)
-    price_col = next((h for h in headers if "DAY" in h.upper() and "PRICE" in h.upper()), None)
-
-    if not mtu_col:
-        print(f"  ❌ Colonne MTU introuvable. Colonnes disponibles : {headers}")
-        return []
-    if not price_col:
-        print(f"  ❌ Colonne prix Day-ahead introuvable. Colonnes disponibles : {headers}")
-        return []
-
-    print(f"  Colonne MTU    : '{mtu_col}'")
-    print(f"  Colonne Prix   : '{price_col}'")
+    print(f"  Encodage détecté : {encoding_used}")
 
     rows = []
-    for i, row in enumerate(reader, 1):
-        mtu   = row.get(mtu_col, "").strip()
-        price = row.get(price_col, "").strip()
+    with open(path, newline="", encoding=encoding_used) as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames or []
+        print(f"  Colonnes détectées : {headers}")
 
-        if not mtu or not price:
-            continue
+        # Trouver les colonnes MTU et prix de façon flexible
+        mtu_col   = next((h for h in headers if "MTU" in h.upper()), None)
+        price_col = next((h for h in headers if "DAY" in h.upper() and "PRICE" in h.upper()), None)
 
-        start, end = parse_mtu(mtu)
-        if not start:
-            print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu}")
-            continue
+        if not mtu_col:
+            print(f"  ❌ Colonne MTU introuvable.")
+            return []
+        if not price_col:
+            print(f"  ❌ Colonne prix Day-ahead introuvable.")
+            return []
 
-        rows.append({
-            "date_heure_debut": start,
-            "date_heure_fin":   end,
-            "prix_eur_mwh":     price,
-            "volume_mw":        "",
-        })
+        print(f"  Colonne MTU  : '{mtu_col}'")
+        print(f"  Colonne Prix : '{price_col}'")
+
+        for i, row in enumerate(reader, 1):
+            mtu   = row.get(mtu_col, "").strip()
+            price = row.get(price_col, "").strip()
+
+            if not mtu or not price:
+                continue
+
+            start, end = parse_mtu(mtu)
+            if not start:
+                if i <= 3:  # n'afficher que les 3 premières erreurs
+                    print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu!r}")
+                continue
+
+            rows.append({
+                "date_heure_debut": start,
+                "date_heure_fin":   end,
+                "prix_eur_mwh":     price,
+                "volume_mw":        "",
+            })
 
     return rows
 
