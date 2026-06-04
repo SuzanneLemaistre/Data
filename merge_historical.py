@@ -56,27 +56,53 @@ def parse_mtu(mtu: str):
 
 
 def load_historical(path: Path) -> list[dict]:
+    # Essayer plusieurs encodages courants
+    for encoding in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+        try:
+            with open(path, newline="", encoding=encoding) as f:
+                content = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+
+    import io
+    reader = csv.DictReader(io.StringIO(content))
+    headers = reader.fieldnames or []
+    print(f"  Colonnes détectées : {headers}")
+
+    # Trouver les colonnes MTU et prix de façon flexible
+    mtu_col   = next((h for h in headers if "MTU" in h.upper()), None)
+    price_col = next((h for h in headers if "DAY" in h.upper() and "PRICE" in h.upper()), None)
+
+    if not mtu_col:
+        print(f"  ❌ Colonne MTU introuvable. Colonnes disponibles : {headers}")
+        return []
+    if not price_col:
+        print(f"  ❌ Colonne prix Day-ahead introuvable. Colonnes disponibles : {headers}")
+        return []
+
+    print(f"  Colonne MTU    : '{mtu_col}'")
+    print(f"  Colonne Prix   : '{price_col}'")
+
     rows = []
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader, 1):
-            mtu   = row.get(INPUT_COLS["mtu"], "").strip()
-            price = row.get(INPUT_COLS["price"], "").strip()
+    for i, row in enumerate(reader, 1):
+        mtu   = row.get(mtu_col, "").strip()
+        price = row.get(price_col, "").strip()
 
-            if not mtu or not price:
-                continue
+        if not mtu or not price:
+            continue
 
-            start, end = parse_mtu(mtu)
-            if not start:
-                print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu}")
-                continue
+        start, end = parse_mtu(mtu)
+        if not start:
+            print(f"  ⚠ Ligne {i} ignorée (MTU non parseable) : {mtu}")
+            continue
 
-            rows.append({
-                "date_heure_debut": start,
-                "date_heure_fin":   end,
-                "prix_eur_mwh":     price,
-                "volume_mw":        "",
-            })
+        rows.append({
+            "date_heure_debut": start,
+            "date_heure_fin":   end,
+            "prix_eur_mwh":     price,
+            "volume_mw":        "",
+        })
 
     return rows
 
