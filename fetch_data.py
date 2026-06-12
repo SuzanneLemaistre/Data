@@ -17,7 +17,10 @@ import os
 import csv
 import requests
 from datetime import date, timedelta, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
+
+PARIS = ZoneInfo("Europe/Paris")
 
 # ── Credentials (une seule application RTE) ───────────────────────────────────
 
@@ -55,7 +58,13 @@ def append_csv(path: Path, headers: list[str], rows: list[dict], dedup_keys: lis
             for row in csv.DictReader(f):
                 existing.add(tuple(row.get(k, "") for k in dedup_keys))
 
-    new_rows = [r for r in rows if tuple(r.get(k, "") for k in dedup_keys) not in existing]
+    new_rows = []
+    seen = existing
+    for r in rows:
+        key = tuple(r.get(k, "") for k in dedup_keys)
+        if key not in seen:
+            seen.add(key)
+            new_rows.append(r)
     write_header = not path.exists() or path.stat().st_size == 0
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
@@ -196,6 +205,16 @@ HEADERS_PICASSO = [
 
 # ── 6. Balancing Energy — aFRR marginal price ─────────────────────────────────
 
+def afrr_step_iso(day_str: str, step: str) -> str:
+    """L'API renvoie le jour ('2026-06-11') et le pas en heure locale Paris
+    ('01:59:56') séparément. On reconstruit un horodatage ISO avec offset
+    (+01:00/+02:00) cohérent avec les autres séries."""
+    try:
+        dt = datetime.strptime(f"{day_str} {step}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=PARIS)
+        return dt.isoformat()
+    except ValueError:
+        return f"{day_str}T{step}"
+
 def fetch_afrr_price(token, start, end):
     url = f"{BE_BASE}/afrr_marginal_price"
     resp = requests.get(url, headers=auth_headers(token),
@@ -205,7 +224,7 @@ def fetch_afrr_price(token, start, end):
     for day in resp.json().get("days", []):
         for v in day.get("datas", []):
             rows.append({
-                "date_heure_debut":            day.get("start_date", "") + "T" + v.get("step", ""),
+                "date_heure_debut":            afrr_step_iso(day.get("start_date", ""), v.get("step", "")),
                 "prorata_mode":                v.get("prorata_mode", ""),
                 "picasso_connection":          v.get("picasso_connection", ""),
                 "upward_afrr_marginal_price":  v.get("upward_afrr_marginal_price", ""),
