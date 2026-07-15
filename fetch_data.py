@@ -38,9 +38,35 @@ BIA_BASE = "https://digital.iservices.rte-france.com/open_api/balancing_imbalanc
 # ── Authentification ──────────────────────────────────────────────────────────
 
 def get_token() -> str:
-    resp = requests.post(TOKEN_URL, auth=(CLIENT_ID, CLIENT_SECRET))
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+    last_err = None
+    for attempt in range(4):
+        try:
+            resp = requests.post(TOKEN_URL, auth=(CLIENT_ID, CLIENT_SECRET), timeout=30)
+            resp.raise_for_status()
+            return resp.json()["access_token"]
+        except Exception as e:
+            last_err = e
+            wait = 2 ** attempt * 10  # 10s, 20s, 40s, 80s
+            print(f"  [Auth] tentative {attempt+1}/4 echouee ({e}), retry dans {wait}s")
+            import time; time.sleep(wait)
+    raise last_err
+
+def get_with_retry(url, headers, params, retries=3):
+    """GET avec retries sur les erreurs 5xx (pannes transitoires RTE)."""
+    import time
+    last_err = None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=60)
+            if resp.status_code >= 500:
+                raise requests.HTTPError(f"{resp.status_code} Server Error", response=resp)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt * 15)  # 15s, 30s
+    raise last_err
 
 def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
@@ -77,9 +103,8 @@ def append_csv(path: Path, headers: list[str], rows: list[dict], dedup_keys: lis
 
 def fetch_wholesale(token, start, end):
     url = f"{WM_BASE}/france_power_exchanges"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for block in resp.json().get("france_power_exchanges", []):
         for v in block.get("values", []):
@@ -97,9 +122,8 @@ HEADERS_WM = ["date_heure_debut", "date_heure_fin", "prix_eur_mwh", "volume_mw"]
 
 def fetch_imbalance(token, start, end):
     url = f"{BE_BASE}/imbalance_data"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for block in resp.json().get("imbalance_data", []):
         for v in block.get("values", []):
@@ -123,9 +147,8 @@ HEADERS_IMBALANCE = [
 
 def fetch_prices(token, start, end):
     url = f"{BE_BASE}/prices"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for block in resp.json().get("prices", []):
         for v in block.get("values", []):
@@ -154,9 +177,8 @@ HEADERS_PRICES = [
 
 def fetch_terre(token, start, end):
     url = f"{BE_BASE}/standard_rr_data"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for v in resp.json().get("terre", {}).get("terre_mesures", []):
         rows.append({
@@ -180,9 +202,8 @@ HEADERS_TERRE = [
 
 def fetch_picasso(token, start, end):
     url = f"{BE_BASE}/standard_afrr_data"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for v in resp.json().get("picasso", {}).get("picasso_mesures", []):
         rows.append({
@@ -216,10 +237,19 @@ def afrr_step_iso(day_str: str, step: str) -> str:
         return f"{day_str}T{step}"
 
 def fetch_afrr_price(token, start, end):
+    """L'API afrr_marginal_price (donnees aux 4 s) n'accepte que des fenetres
+    courtes : on boucle jour par jour."""
+    rows = []
+    cursor = start
+    while cursor < end:
+        rows.extend(_fetch_afrr_price_day(token, cursor, cursor + timedelta(days=1)))
+        cursor += timedelta(days=1)
+    return rows
+
+def _fetch_afrr_price_day(token, start, end):
     url = f"{BE_BASE}/afrr_marginal_price"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for day in resp.json().get("days", []):
         for v in day.get("datas", []):
@@ -246,9 +276,8 @@ HEADERS_AFRR_PRICE = [
 
 def fetch_mfrr(token, start, end):
     url = f"{BE_BASE}/standard_mfrr_data"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token),
+                          {"start_date": fmt_dt(start), "end_date": fmt_dt(end)})
     rows = []
     for v in resp.json().get("mari", {}).get("mari_mesures", []):
             rows.append({
@@ -277,9 +306,7 @@ HEADERS_MFRR = [
 def fetch_coefficient_k(token, month: str) -> list[dict]:
     """month : format YYYY-MM"""
     url = f"{BIA_BASE}/coefficient_k"
-    resp = requests.get(url, headers=auth_headers(token),
-                        params={"application_month": month})
-    resp.raise_for_status()
+    resp = get_with_retry(url, auth_headers(token), {"application_month": month})
     k = resp.json().get("coefficient_k", "")
     return [{"mois": month, "coefficient_k": k}]
 
@@ -293,11 +320,13 @@ def run(label: str, fetch_fn, headers: list[str], csv_path: Path,
         print(f"  [{label}] Aucune donnée retournée.")
         return
     added = append_csv(csv_path, headers, rows, dedup_keys)
-    print(f"  [{label}] {added} nouvelles lignes → {csv_path}")
+    print(f"  [{label}] {added} nouvelles lignes -> {csv_path}")
 
 def main():
     today     = date.today()
-    yesterday = today - timedelta(days=1)
+    # Fenetre glissante de 7 jours : re-collecte automatiquement les jours
+    # manques si un run a echoue (la deduplication rend l'operation idempotente)
+    yesterday = today - timedelta(days=7)
     this_month = today.strftime("%Y-%m")
 
     print(f"\n[{datetime.now().isoformat()}] Collecte du {yesterday} …\n")
