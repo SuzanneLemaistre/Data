@@ -6,15 +6,25 @@ APIs couvertes :
                                    data/prices.csv
                                    data/standard_rr_data.csv
                                    data/standard_afrr_data.csv
-                                   data/afrr_marginal_price.csv
+                                   data/afrr_marginal_price/AAAA-MM-JJ.csv.gz
                                    data/standard_mfrr_data.csv
   - Balancing Imbalances Account → data/coefficient_k.csv  (mensuel)
+
+La série aFRR marginal price est au pas de 4 s (~21 600 lignes / 1,7 Mo par
+jour). Elle est donc stockée en partitions journalières compressées, et non
+dans un fichier unique : un fichier unique dépasse la limite de 100 Mo de
+GitHub au bout de deux mois et bloque le push.
+
+Variable d'environnement optionnelle :
+  DAYS_BACK   nombre de jours à recollecter (défaut 7). À augmenter pour
+              rattraper un trou de données (ex : DAYS_BACK=40).
 
 Dépendances : pip install requests
 """
 
 import os
 import csv
+import gzip
 import requests
 from datetime import date, timedelta, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -34,6 +44,10 @@ TOKEN_URL = "https://digital.iservices.rte-france.com/token/oauth/"
 WM_BASE  = "https://digital.iservices.rte-france.com/open_api/wholesale_market/v3"
 BE_BASE  = "https://digital.iservices.rte-france.com/open_api/balancing_energy/v5"
 BIA_BASE = "https://digital.iservices.rte-france.com/open_api/balancing_imbalances_account/v1"
+
+# Fenêtre maximale acceptée par requête (les APIs RTE refusent les plages
+# trop larges) : on découpe la période demandée en tranches de cette taille.
+MAX_WINDOW_DAYS = 7
 
 # ── Authentification ──────────────────────────────────────────────────────────
 
@@ -75,6 +89,21 @@ def auth_headers(token: str) -> dict:
 
 def fmt_dt(d: date) -> str:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+def by_windows(start: date, end: date, max_days: int = MAX_WINDOW_DAYS):
+    """Découpe [start, end) en tranches de max_days jours au maximum."""
+    cursor = start
+    while cursor < end:
+        stop = min(cursor + timedelta(days=max_days), end)
+        yield cursor, stop
+        cursor = stop
+
+def fetch_windowed(fetch_one, token, start, end, max_days=MAX_WINDOW_DAYS):
+    """Appelle fetch_one(token, a, b) sur chaque tranche et concatène."""
+    rows = []
+    for a, b in by_windows(start, end, max_days):
+        rows.extend(fetch_one(token, a, b))
+    return rows
 
 def append_csv(path: Path, headers: list[str], rows: list[dict], dedup_keys: list[str]) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -224,7 +253,9 @@ HEADERS_PICASSO = [
     "upward_afrr_activated_volume_in_fr", "downward_afrr_activated_volume_in_fr",
 ]
 
-# ── 6. Balancing Energy — aFRR marginal price ─────────────────────────────────
+# ── 6. Balancing Energy — aFRR marginal price (partitions journalières) ──────
+
+AFRR_DIR = Path("data/afrr_marginal_price")
 
 def afrr_step_iso(day_str: str, step: str) -> str:
     """L'API renvoie le jour ('2026-06-11') et le pas en heure locale Paris
@@ -239,12 +270,7 @@ def afrr_step_iso(day_str: str, step: str) -> str:
 def fetch_afrr_price(token, start, end):
     """L'API afrr_marginal_price (donnees aux 4 s) n'accepte que des fenetres
     courtes : on boucle jour par jour."""
-    rows = []
-    cursor = start
-    while cursor < end:
-        rows.extend(_fetch_afrr_price_day(token, cursor, cursor + timedelta(days=1)))
-        cursor += timedelta(days=1)
-    return rows
+    return fetch_windowed(_fetch_afrr_price_day, token, start, end, max_days=1)
 
 def _fetch_afrr_price_day(token, start, end):
     url = f"{BE_BASE}/afrr_marginal_price"
@@ -271,6 +297,52 @@ HEADERS_AFRR_PRICE = [
     "upward_afrr_marginal_price", "downward_afrr_marginal_price",
     "pdemand", "afrr_for_france", "afrr_in_france",
 ]
+
+def afrr_partition_path(day: str) -> Path:
+    return AFRR_DIR / f"{day}.csv.gz"
+
+def write_afrr_partitions(rows: list[dict]) -> int:
+    """Range les lignes aFRR dans data/afrr_marginal_price/AAAA-MM-JJ.csv.gz,
+    une partition par date locale. Chaque partition est fusionnée avec son
+    contenu existant (dédup sur l'horodatage) puis réécrite triée.
+
+    Les fenêtres de collecte étant calées sur minuit UTC, une requête couvre
+    deux dates locales : la fusion garantit qu'une journée incomplète est
+    complétée par la collecte suivante.
+    """
+    AFRR_DIR.mkdir(parents=True, exist_ok=True)
+
+    by_day: dict[str, list[dict]] = {}
+    for r in rows:
+        day = r["date_heure_debut"][:10]
+        if len(day) == 10:
+            by_day.setdefault(day, []).append(r)
+
+    added_total = 0
+    for day, day_rows in sorted(by_day.items()):
+        path = afrr_partition_path(day)
+        merged: dict[str, dict] = {}
+        if path.exists():
+            with gzip.open(path, "rt", newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    merged[row["date_heure_debut"]] = row
+        before = len(merged)
+        for r in day_rows:
+            merged.setdefault(r["date_heure_debut"], r)
+        added = len(merged) - before
+        if added == 0 and before > 0:
+            continue
+
+        tmp = path.with_suffix(".gz.tmp")
+        with gzip.open(tmp, "wt", newline="", encoding="utf-8", compresslevel=9) as f:
+            w = csv.DictWriter(f, fieldnames=HEADERS_AFRR_PRICE, extrasaction="ignore")
+            w.writeheader()
+            for key in sorted(merged):
+                w.writerow(merged[key])
+        tmp.replace(path)
+        added_total += added
+        print(f"      {path.name} : {added} nouvelles lignes ({len(merged)} au total)")
+    return added_total
 
 # ── 7. Balancing Energy — MARI/mFRR (standard_mfrr_data) ─────────────────────
 
@@ -314,7 +386,7 @@ HEADERS_K = ["mois", "coefficient_k"]
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
-def run(label: str, fetch_fn, headers: list[str], csv_path: Path,
+def run(label: str, headers: list[str], csv_path: Path,
         dedup_keys: list[str], rows: list[dict]) -> None:
     if not rows:
         print(f"  [{label}] Aucune donnée retournée.")
@@ -322,68 +394,78 @@ def run(label: str, fetch_fn, headers: list[str], csv_path: Path,
     added = append_csv(csv_path, headers, rows, dedup_keys)
     print(f"  [{label}] {added} nouvelles lignes -> {csv_path}")
 
-def main():
-    today     = date.today()
-    # Fenetre glissante de 7 jours : re-collecte automatiquement les jours
-    # manques si un run a echoue (la deduplication rend l'operation idempotente)
-    yesterday = today - timedelta(days=7)
-    this_month = today.strftime("%Y-%m")
+def days_back() -> int:
+    """Profondeur de recollecte. Fenêtre glissante de 7 jours par défaut :
+    rattrape automatiquement les jours manqués si un run a échoué (la
+    déduplication rend l'opération idempotente). Augmenter DAYS_BACK pour
+    combler un trou plus ancien."""
+    try:
+        return max(1, int(os.environ.get("DAYS_BACK", "7")))
+    except ValueError:
+        return 7
 
-    print(f"\n[{datetime.now().isoformat()}] Collecte du {yesterday} …\n")
+def main():
+    today = date.today()
+    start = today - timedelta(days=days_back())
+
+    print(f"\n[{datetime.now().isoformat()}] Collecte du {start} au {today} …\n")
     token = get_token()
 
     # 1. Wholesale Market
     try:
-        rows = fetch_wholesale(token, yesterday, today)
-        run("Wholesale Market", None, HEADERS_WM,
+        rows = fetch_windowed(fetch_wholesale, token, start, today)
+        run("Wholesale Market", HEADERS_WM,
             Path("data/spot_france.csv"), ["date_heure_debut", "date_heure_fin"], rows)
     except Exception as e:
         print(f"  [Wholesale Market] ERREUR : {e}")
 
     # 2. Imbalance data
     try:
-        rows = fetch_imbalance(token, yesterday, today)
-        run("Imbalance Data", None, HEADERS_IMBALANCE,
+        rows = fetch_windowed(fetch_imbalance, token, start, today)
+        run("Imbalance Data", HEADERS_IMBALANCE,
             Path("data/imbalance_data.csv"), ["date_heure_debut", "date_heure_fin"], rows)
     except Exception as e:
         print(f"  [Imbalance Data] ERREUR : {e}")
 
     # 3. Balancing prices
     try:
-        rows = fetch_prices(token, yesterday, today)
-        run("Balancing Prices", None, HEADERS_PRICES,
+        rows = fetch_windowed(fetch_prices, token, start, today)
+        run("Balancing Prices", HEADERS_PRICES,
             Path("data/prices.csv"), ["date_heure_debut", "date_heure_fin"], rows)
     except Exception as e:
         print(f"  [Balancing Prices] ERREUR : {e}")
 
     # 4. TERRE
     try:
-        rows = fetch_terre(token, yesterday, today)
-        run("TERRE (RR)", None, HEADERS_TERRE,
+        rows = fetch_windowed(fetch_terre, token, start, today)
+        run("TERRE (RR)", HEADERS_TERRE,
             Path("data/standard_rr_data.csv"), ["date_heure_debut", "direction"], rows)
     except Exception as e:
         print(f"  [TERRE] ERREUR : {e}")
 
     # 5. PICASSO (aFRR)
     try:
-        rows = fetch_picasso(token, yesterday, today)
-        run("PICASSO (aFRR)", None, HEADERS_PICASSO,
+        rows = fetch_windowed(fetch_picasso, token, start, today)
+        run("PICASSO (aFRR)", HEADERS_PICASSO,
             Path("data/standard_afrr_data.csv"), ["date_heure_debut"], rows)
     except Exception as e:
         print(f"  [PICASSO] ERREUR : {e}")
 
-    # 6. aFRR marginal price
+    # 6. aFRR marginal price (partitions journalières compressées)
     try:
-        rows = fetch_afrr_price(token, yesterday, today)
-        run("aFRR Marginal Price", None, HEADERS_AFRR_PRICE,
-            Path("data/afrr_marginal_price.csv"), ["date_heure_debut"], rows)
+        rows = fetch_afrr_price(token, start, today)
+        if rows:
+            added = write_afrr_partitions(rows)
+            print(f"  [aFRR Marginal Price] {added} nouvelles lignes -> {AFRR_DIR}/")
+        else:
+            print("  [aFRR Marginal Price] Aucune donnée retournée.")
     except Exception as e:
         print(f"  [aFRR Marginal Price] ERREUR : {e}")
 
     # 7. MARI / mFRR
     try:
-        rows = fetch_mfrr(token, yesterday, today)
-        run("MARI (mFRR)", None, HEADERS_MFRR,
+        rows = fetch_windowed(fetch_mfrr, token, start, today)
+        run("MARI (mFRR)", HEADERS_MFRR,
             Path("data/standard_mfrr_data.csv"), ["date_heure_debut"], rows)
     except Exception as e:
         print(f"  [MARI/mFRR] ERREUR : {e}")
@@ -393,7 +475,7 @@ def main():
         prev_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
         try:
             rows = fetch_coefficient_k(token, prev_month)
-            run("Coefficient K", None, HEADERS_K,
+            run("Coefficient K", HEADERS_K,
                 Path("data/coefficient_k.csv"), ["mois"], rows)
         except Exception as e:
             print(f"  [Coefficient K] ERREUR : {e}")

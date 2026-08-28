@@ -1,0 +1,4 @@
+# core.autocrlf=true est actif sur le poste local : sans cette règle Git
+# pourrait traiter les partitions gzip comme du texte et corrompre les fins
+# de ligne à l'archivage.
+*.csv.gz binary

@@ -1,2 +1,8 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
+
+# Ancien fichier monolithique aFRR : remplacé par les partitions journalières
+# data/afrr_marginal_price/AAAA-MM-JJ.csv.gz. Ignoré pour qu'il ne puisse pas
+# réapparaître et refaire dépasser la limite de 100 Mo de GitHub.
+data/afrr_marginal_price.csv
+*.csv.gz.tmp
