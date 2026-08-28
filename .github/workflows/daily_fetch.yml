@@ -6,6 +6,11 @@ on:
     # Les données J-1 sont publiées par RTE en début de matinée
     - cron: "0 8 * * *"
   workflow_dispatch:   # Permet aussi un lancement manuel depuis GitHub
+    inputs:
+      days_back:
+        description: "Nombre de jours à recollecter (7 par défaut ; augmenter pour combler un trou)"
+        required: false
+        default: "7"
 
 permissions:
   contents: write      # Nécessaire pour que le workflow puisse commiter le CSV
@@ -30,13 +35,27 @@ jobs:
         env:
           RTE_CLIENT_ID:     ${{ secrets.RTE_CLIENT_ID }}
           RTE_CLIENT_SECRET: ${{ secrets.RTE_CLIENT_SECRET }}
+          DAYS_BACK:         ${{ inputs.days_back || '7' }}
         run: python fetch_data.py
+
+      - name: Vérifier qu'aucun fichier n'approche la limite GitHub
+        run: |
+          # GitHub rejette tout fichier > 100 Mo. On alerte dès 90 Mo pour
+          # avoir le temps de repartitionner avant que le push ne casse.
+          big=$(find data -type f -size +90M)
+          if [ -n "$big" ]; then
+            echo "::error::Fichier(s) trop volumineux, le push serait rejeté par GitHub :"
+            find data -type f -size +90M -exec ls -lh {} \;
+            exit 1
+          fi
+          echo "Fichier le plus gros :"
+          find data -type f -printf '%s %p\n' | sort -rn | head -1
 
       - name: Commiter et pousser les nouvelles données
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/
+          git add -A data/
           # Ne commite que s'il y a vraiment des changements
-          git diff --cached --quiet || git commit -m "data: ajout données spot du $(date -u +%Y-%m-%d)"
+          git diff --cached --quiet || git commit -m "data: collecte du $(date -u +%Y-%m-%d)"
           git push
